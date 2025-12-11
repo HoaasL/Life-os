@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>LifeOS V3 | 长期主义</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body, #app { height: 100vh; height: 100dvh; overflow: hidden; font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .mic-active { animation: pulse 1.5s infinite; background-color: #ef4444 !important; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+        .mobile-card { background: white; border-radius: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+    </style>
+</head>
+<body class="text-slate-800">
+    <div id="app" class="flex w-full h-full relative">
+        <div v-if="showMobileMenu" @click="showMobileMenu = false" class="fixed inset-0 bg-black/50 z-30 md:hidden backdrop-blur-sm"></div>
+        
+        <!-- Sidebar -->
+        <aside :class="showMobileMenu ? 'translate-x-0' : '-translate-x-full md:translate-x-0'" class="fixed md:relative z-40 w-[75%] md:w-64 h-full bg-slate-900 text-white transition-transform duration-300 flex flex-col shadow-2xl">
+            <div class="p-6 font-bold text-xl flex justify-between items-center border-b border-slate-800">
+                <span>LifeOS <span class="text-emerald-400">V3</span></span>
+            </div>
+            <nav class="flex-1 p-4 space-y-2">
+                <button v-for="item in menuItems" @click="switchTab(item.id)" :class="currentTab===item.id?'bg-emerald-600 text-white':'text-slate-400 hover:text-white'" class="w-full p-4 rounded-xl flex items-center gap-4 transition-all">
+                    <span class="text-2xl">{{ item.icon }}</span><span class="font-medium">{{ item.name }}</span>
+                </button>
+            </nav>
+        </aside>
+
+        <!-- Main -->
+        <main class="flex-1 flex flex-col h-full bg-slate-50 w-full overflow-hidden">
+            <header class="bg-white border-b h-16 shrink-0 flex items-center justify-between px-4 sticky top-0 z-10">
+                <button @click="showMobileMenu = true" class="md:hidden text-2xl">☰</button>
+                <h2 class="font-bold">{{ getTabName(currentTab) }}</h2>
+                <div class="text-xs text-slate-400">{{ todayDate }}</div>
+            </header>
+
+            <div class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-24 md:pb-8 no-scrollbar scroll-smooth">
+                <!-- Dashboard -->
+                <div v-if="currentTab === 'dashboard'" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="mobile-card p-4 text-center"><div class="text-xs text-slate-400 font-bold">完成度</div><div class="text-3xl font-black mt-1">{{ completionRate }}%</div></div>
+                        <div class="mobile-card p-4 text-center"><div class="text-xs text-slate-400 font-bold">连胜</div><div class="text-3xl font-black text-orange-500 mt-1">{{ maxStreak }}</div></div>
+                    </div>
+                    <div class="space-y-3 md:grid md:grid-cols-3 md:gap-4 md:space-y-0">
+                        <div v-for="(h, i) in habits" :key="i" class="mobile-card p-4 flex justify-between items-center">
+                            <div class="flex gap-3 items-center">
+                                <span class="text-2xl bg-slate-50 p-2 rounded">{{ h.icon }}</span>
+                                <div><h3 class="font-bold">{{ h.name }}</h3><p class="text-xs text-slate-400">{{ h.desc }}</p></div>
+                            </div>
+                            <button @click="toggleCheck(i)" :class="isCheckedToday(h)?'bg-emerald-500 text-white':'bg-slate-100 text-transparent'" class="w-10 h-10 rounded-full flex items-center justify-center transition-all">✓</button>
+                        </div>
+                        <button @click="showPlanModal=true" class="mobile-card p-4 flex justify-center items-center text-slate-400 border-dashed border-2 gap-2">+ 添加 / AI 生成</button>
+                    </div>
+                </div>
+
+                <!-- Chat -->
+                <div v-if="currentTab === 'chat'" class="flex flex-col h-[calc(100dvh-140px)] md:h-full bg-white md:rounded-xl md:shadow-sm">
+                    <div class="flex-1 overflow-y-auto p-4 space-y-4" ref="chatBox">
+                        <div v-if="!chatHistory.length" class="text-center text-slate-300 mt-20 text-sm">我是 DeepSeek 教练，有什么可以帮你？</div>
+                        <div v-for="m in chatHistory" class="p-3 rounded-xl text-sm max-w-[90%] break-words" :class="m.role==='user'?'bg-emerald-600 text-white self-end ml-auto':'bg-slate-100 text-slate-800 self-start'">
+                            <span v-html="renderMarkdown(m.content)"></span>
+                        </div>
+                        <div v-if="isThinking" class="text-xs text-slate-400 animate-pulse">Thinking...</div>
+                    </div>
+                    <div class="p-3 border-t flex gap-2">
+                        <input v-model="userInput" @keyup.enter="sendMessage" placeholder="输入问题..." class="flex-1 bg-slate-50 border-0 rounded-full px-4 text-sm">
+                        <button @click="sendMessage" class="px-4 bg-emerald-600 text-white rounded-full text-sm font-bold">发送</button>
+                    </div>
+                </div>
+
+                <!-- Settings -->
+                <div v-if="currentTab === 'settings'" class="space-y-4">
+                    <div class="mobile-card p-5 space-y-3">
+                        <h3 class="font-bold">🧠 AI 模型设置</h3>
+                        <input v-model="apiBaseUrl" placeholder="URL (e.g. https://api.deepseek.com)" class="w-full border p-2 rounded text-sm">
+                        <input v-model="apiKey" type="password" placeholder="API Key (sk-...)" class="w-full border p-2 rounded text-sm">
+                        <input v-model="apiModel" placeholder="模型名称 (例如 deepseek-chat)" class="w-full border p-2 rounded text-sm bg-yellow-50">
+                        <p class="text-xs text-slate-400">DeepSeek 请填: deepseek-chat<br>OpenAI 请填: gpt-3.5-turbo</p>
+                    </div>
+                    <div class="mobile-card p-5 space-y-3">
+                        <h3 class="font-bold">☁️ Supabase 同步</h3>
+                        <input v-model="supabaseUrl" placeholder="Supabase URL" class="w-full border p-2 rounded text-sm">
+                        <input v-model="supabaseKey" type="password" placeholder="Supabase Key" class="w-full border p-2 rounded text-sm">
+                        <button @click="connectSupabase" class="w-full bg-slate-900 text-white py-2 rounded text-sm">连接 / 同步</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Plan Modal -->
+        <div v-if="showPlanModal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6 backdrop-blur-sm">
+            <div class="bg-white w-full max-w-sm rounded-2xl p-6 shadow-xl">
+                <h3 class="font-bold text-lg mb-2">✨ AI 计划生成</h3>
+                <textarea v-model="planPrompt" placeholder="我想在一个月内学会..." class="w-full h-24 border p-2 rounded-lg text-sm mb-4"></textarea>
+                <div class="flex gap-2">
+                    <button @click="showPlanModal=false" class="flex-1 py-2 bg-slate-100 rounded-lg text-sm">取消</button>
+                    <button @click="generatePlan" :disabled="isThinking" class="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm">{{ isThinking?'生成中...':'开始生成' }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, watch, nextTick, onMounted } = Vue;
+        createApp({
+            setup() {
+                // Config
+                const apiKey = ref(localStorage.getItem('ls_apiKey') || '');
+                const apiBaseUrl = ref(localStorage.getItem('ls_apiBaseUrl') || 'https://api.deepseek.com');
+                const apiModel = ref(localStorage.getItem('ls_apiModel') || 'deepseek-chat'); // 新增：模型设置
+                const supabaseUrl = ref(localStorage.getItem('ls_sbUrl') || '');
+                const supabaseKey = ref(localStorage.getItem('ls_sbKey') || '');
+                
+                const currentTab = ref('dashboard');
+                const showMobileMenu = ref(false);
+                const showPlanModal = ref(false);
+                const userInput = ref('');
+                const planPrompt = ref('');
+                const isThinking = ref(false);
+                const isCloudSync = ref(false);
+                let supabase = null;
+
+                const defaultHabits = [{ name: 'DeepSeek 探索', desc: '测试 API 连接', icon: '🚀', history: [], streak: 0 }];
+                const habits = ref(JSON.parse(localStorage.getItem('ls_habits')) || defaultHabits);
+                const chatHistory = ref(JSON.parse(localStorage.getItem('ls_chat')) || []);
+
+                const menuItems = [
+                    { id: 'dashboard', name: '看板', icon: '📊' },
+                    { id: 'chat', name: 'AI 助手', icon: '🤖' },
+                    { id: 'settings', name: '设置', icon: '⚙️' }
+                ];
+
+                const callAI = async (messages, jsonMode = false) => {
+                    if (!apiKey.value) throw new Error("请先填入 API Key");
+                    // 自动处理 URL 末尾的 /v1
+                    let url = apiBaseUrl.value.replace(/\/$/, ''); // 去掉末尾斜杠
+                    if (!url.endsWith('/v1')) url += '/chat/completions'; // 如果没有v1，且不是完整路径，DeepSeek也兼容，但建议加上路径
+                    else url += '/chat/completions';
+                    
+                    // DeepSeek 推荐地址: https://api.deepseek.com/chat/completions
+                    // 为了兼容性，这里简化处理，直接用 fetch 拼接
+                    const finalUrl = `${apiBaseUrl.value}/chat/completions`.replace('//chat', '/chat');
+
+                    const res = await fetch(finalUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey.value}` },
+                        body: JSON.stringify({
+                            model: apiModel.value, // 使用设置里的模型名
+                            messages,
+                            response_format: jsonMode ? { type: "json_object" } : undefined
+                        })
+                    });
+                    const data = await res.json();
+                    if(data.error) throw new Error(data.error.message);
+                    return data.choices[0].message.content;
+                };
+
+                const sendMessage = async () => {
+                    if(!userInput.value.trim()) return;
+                    const text = userInput.value; userInput.value = '';
+                    chatHistory.value.push({ role: 'user', content: text });
+                    isThinking.value = true;
+                    try {
+                        const reply = await callAI([...chatHistory.value.slice(-6)]);
+                        chatHistory.value.push({ role: 'assistant', content: reply });
+                    } catch(e) { chatHistory.value.push({ role: 'assistant', content: "❌ " + e.message }); }
+                    isThinking.value = false; saveData();
+                };
+
+                const generatePlan = async () => {
+                    if(!planPrompt.value) return;
+                    isThinking.value = true;
+                    try {
+                        const res = await callAI([
+                            { role: "system", content: "你是一个计划助手。请只输出 JSON: {\"habits\":[{\"name\":\"简短名\",\"desc\":\"描述\",\"icon\":\"emoji\"}]}" },
+                            { role: "user", content: planPrompt.value }
+                        ], true);
+                        const newHabits = JSON.parse(res).habits;
+                        newHabits.forEach(h => habits.value.push({...h, history:[], streak:0}));
+                        showPlanModal.value = false; planPrompt.value = '';
+                    } catch(e) { alert("生成失败: " + e.message); }
+                    isThinking.value = false; saveData();
+                };
+
+                const saveData = async () => {
+                    localStorage.setItem('ls_habits', JSON.stringify(habits.value));
+                    localStorage.setItem('ls_chat', JSON.stringify(chatHistory.value));
+                    localStorage.setItem('ls_apiKey', apiKey.value);
+                    localStorage.setItem('ls_apiBaseUrl', apiBaseUrl.value);
+                    localStorage.setItem('ls_apiModel', apiModel.value);
+                    if(isCloudSync.value && supabase) await supabase.from('user_data').upsert({ id: 1, habits: habits.value, chat_history: chatHistory.value, updated_at: new Date() });
+                };
+
+                const connectSupabase = async () => {
+                    if(!supabaseUrl.value) return;
+                    try {
+                        supabase = window.supabase.createClient(supabaseUrl.value, supabaseKey.value);
+                        const { data } = await supabase.from('user_data').select('*').limit(1);
+                        if(data) { isCloudSync.value = true; if(data.length) { habits.value=data[0].habits; chatHistory.value=data[0].chat_history; } alert("同步成功"); localStorage.setItem('ls_sbUrl', supabaseUrl.value); localStorage.setItem('ls_sbKey', supabaseKey.value); }
+                    } catch(e) { alert("连接失败"); }
+                };
+
+                watch([apiKey, apiBaseUrl, apiModel], saveData);
+                onMounted(() => { if(supabaseUrl.value) connectSupabase(); });
+
+                return {
+                    currentTab, menuItems, switchTab: (id)=>{currentTab.value=id; showMobileMenu.value=false}, 
+                    getTabName: (id)=>menuItems.find(i=>i.id===id).name, showMobileMenu, todayDate: new Date().toLocaleDateString(),
+                    habits, isCheckedToday: (h)=>h.history.includes(new Date().toISOString().split('T')[0]),
+                    toggleCheck: (i)=>{ const h=habits.value[i]; const t=new Date().toISOString().split('T')[0]; if(h.history.includes(t)) { h.history=h.history.filter(d=>d!==t); h.streak--; } else { h.history.push(t); h.streak++; } saveData(); },
+                    chatHistory, userInput, sendMessage, isThinking, renderMarkdown: marked.parse,
+                    showPlanModal, planPrompt, generatePlan,
+                    apiKey, apiBaseUrl, apiModel, supabaseUrl, supabaseKey, connectSupabase,
+                    completionRate: computed(()=>habits.value.length?Math.round((habits.value.filter(h=>h.history.includes(new Date().toISOString().split('T')[0])).length/habits.value.length)*100):0),
+                    maxStreak: computed(()=>Math.max(0, ...habits.value.map(h=>h.streak||0)))
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
