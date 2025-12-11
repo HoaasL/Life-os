@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LifeOS V2.0 | AI 长期主义系统</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 引入 Supabase 客户端 (为云端同步做准备) -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+        .mic-active { animation: pulse 1.5s infinite; background-color: #ef4444 !important; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        /* 隐藏滚动条但保留功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="h-screen overflow-hidden flex flex-col md:flex-row text-slate-800">
+
+    <div id="app" class="w-full h-full flex flex-col md:flex-row relative">
+        
+        <!-- 移动端顶部导航 -->
+        <div class="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center z-50">
+            <span class="font-bold text-lg tracking-wider">LifeOS <span class="text-emerald-400">AI</span></span>
+            <button @click="showMobileMenu = !showMobileMenu" class="text-2xl">☰</button>
+        </div>
+
+        <!-- 侧边栏 (PC/Mobile) -->
+        <aside :class="{'translate-x-0': showMobileMenu, '-translate-x-full': !showMobileMenu}" 
+               class="absolute md:relative z-40 w-64 h-full bg-slate-900 text-white transition-transform duration-300 md:translate-x-0 flex flex-col justify-between shadow-2xl">
+            <div>
+                <div class="p-8 font-bold text-2xl tracking-wider hidden md:block">
+                    LifeOS <span class="text-emerald-400">V2</span>
+                </div>
+                <nav class="flex flex-col gap-2 p-4">
+                    <template v-for="item in menuItems" :key="item.id">
+                        <button @click="currentTab = item.id; showMobileMenu = false" 
+                            :class="{'bg-emerald-600 shadow-lg shadow-emerald-900/50': currentTab===item.id, 'hover:bg-slate-800': currentTab!==item.id}" 
+                            class="p-4 rounded-xl flex items-center gap-4 transition-all duration-200">
+                            <span class="text-xl">{{ item.icon }}</span> 
+                            <span class="font-medium">{{ item.name }}</span>
+                        </button>
+                    </template>
+                </nav>
+            </div>
+            
+            <!-- 底部状态区 -->
+            <div class="p-6 border-t border-slate-700 bg-slate-950/50">
+                <div class="flex items-center gap-2 text-xs text-slate-400 mb-2">
+                    <span class="w-2 h-2 rounded-full" :class="isCloudSync ? 'bg-green-500' : 'bg-yellow-500'"></span>
+                    {{ isCloudSync ? '云端已连接 (Supabase)' : '本地模式 (LocalStorage)' }}
+                </div>
+                <button @click="startDailyReview" class="w-full bg-gradient-to-r from-indigo-500 to-purple-600 py-3 rounded-lg font-bold text-sm shadow-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+                    <span>🎙️</span> 开启语音复盘
+                </button>
+            </div>
+        </aside>
+
+        <!-- 主界面 -->
+        <main class="flex-1 h-full overflow-hidden bg-slate-50 relative flex flex-col">
+            
+            <!-- 顶部栏 -->
+            <header class="bg-white/80 backdrop-blur border-b border-slate-200 p-4 md:p-6 flex justify-between items-center z-10">
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-800">{{ getTabName(currentTab) }}</h2>
+                    <p class="text-sm text-slate-500 hidden md:block" v-if="currentTab === 'dashboard'">"{{ dailyQuote }}"</p>
+                </div>
+                <div class="flex gap-3">
+                     <!-- 快速添加按钮 -->
+                    <button @click="showPlanModal = true" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-700 transition flex items-center gap-2">
+                        <span>✨</span> <span class="hidden md:inline">AI 生成计划</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- 滚动内容区 -->
+            <div class="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 no-scrollbar scroll-smooth">
+                
+                <!-- 1. 仪表盘 -->
+                <div v-if="currentTab === 'dashboard'" class="space-y-8">
+                    <!-- 进度统计 -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                            <div class="text-slate-400 text-xs uppercase font-bold">今日完成度</div>
+                            <div class="text-3xl font-black text-slate-800 mt-1">{{ completionRate }}%</div>
+                        </div>
+                         <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                            <div class="text-slate-400 text-xs uppercase font-bold">连胜天数</div>
+                            <div class="text-3xl font-black text-orange-500 mt-1">🔥 {{ maxStreak }}</div>
+                        </div>
+                    </div>
+
+                    <!-- 习惯卡片 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div v-for="(habit, idx) in habits" :key="idx" 
+                             class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 transition-all hover:-translate-y-1 hover:shadow-xl group">
+                            <div class="flex justify-between items-start">
+                                <span class="text-4xl p-3 bg-slate-50 rounded-2xl">{{ habit.icon }}</span>
+                                <button @click="toggleCheck(idx)" 
+                                        :class="isCheckedToday(habit) ? 'bg-emerald-500 text-white rotate-0' : 'bg-slate-100 text-slate-300 -rotate-180'"
+                                        class="w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 shadow-sm">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="mt-4">
+                                <h3 class="font-bold text-lg text-slate-800">{{ habit.name }}</h3>
+                                <p class="text-sm text-slate-400 mt-1 h-10 line-clamp-2">{{ habit.desc }}</p>
+                            </div>
+                            <!-- 绑定最近一次反馈 -->
+                            <div v-if="habit.lastFeedback" class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500 bg-slate-50 p-2 rounded">
+                                💬 {{ habit.lastFeedback }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. AI 助手 (语音版) -->
+                <div v-if="currentTab === 'chat'" class="h-full flex flex-col bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
+                    <div class="flex-1 overflow-y-auto p-6 space-y-6" id="chat-box">
+                        <div v-for="(msg, i) in chatHistory" :key="i" 
+                             class="flex flex-col max-w-[85%]" 
+                             :class="msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'">
+                            <div class="p-4 rounded-2xl text-sm leading-relaxed"
+                                 :class="msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'bg-slate-100 text-slate-800 rounded-tl-none'">
+                                <span v-html="renderMarkdown(msg.content)"></span>
+                            </div>
+                            <span class="text-[10px] text-slate-300 mt-1 px-1">{{ msg.time }}</span>
+                        </div>
+                        <div v-if="isThinking" class="self-start text-slate-400 text-sm animate-pulse pl-2">AI 正在思考并规划...</div>
+                    </div>
+                    
+                    <!-- 输入与语音控制区 -->
+                    <div class="p-4 bg-white border-t border-slate-100">
+                        <div class="flex gap-2 items-center">
+                            <button @click="toggleVoiceMode" :class="isVoiceActive ? 'mic-active text-white' : 'bg-slate-100 text-slate-600'" class="p-3 rounded-full transition-all">
+                                🎙️
+                            </button>
+                            <input v-model="userInput" @keyup.enter="sendMessage" type="text" placeholder="输入问题或任务..." class="flex-1 bg-slate-50 border-0 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                            <button @click="sendMessage" class="bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition">发送</button>
+                        </div>
+                        <div v-if="voiceStatus" class="text-center text-xs text-emerald-600 mt-2 font-medium">{{ voiceStatus }}</div>
+                    </div>
+                </div>
+
+                <!-- 3. 设置/数据源 -->
+                <div v-if="currentTab === 'settings'" class="max-w-2xl mx-auto w-full">
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mb-6">
+                        <h3 class="text-xl font-bold mb-6">☁️ 跨设备同步设置 (Supabase)</h3>
+                        <p class="text-sm text-slate-500 mb-4">为了在手机和电脑间同步，并让 n8n 能读取你的进度，请填写 Supabase 信息。</p>
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Supabase URL</label>
+                                <input v-model="supabaseUrl" type="text" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Supabase Anon Key</label>
+                                <input v-model="supabaseKey" type="password" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm">
+                            </div>
+                            <div class="flex gap-3">
+                                <button @click="connectSupabase" class="flex-1 bg-slate-900 text-white py-2 rounded-lg text-sm hover:bg-slate-800">连接测试 & 同步</button>
+                                <button @click="toggleCloudMode" class="px-4 py-2 border border-slate-300 rounded-lg text-sm">{{ isCloudSync ? '切换回本地' : '强制本地模式' }}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+                         <h3 class="text-xl font-bold mb-4">🔑 AI API 设置</h3>
+                         <input v-model="apiKey" type="password" placeholder="sk-..." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm mb-2">
+                         <input v-model="apiBaseUrl" type="text" placeholder="https://api.openai.com/v1" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm">
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 模态框: AI 计划生成 -->
+        <div v-if="showPlanModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                <h3 class="text-xl font-bold mb-2">✨ AI 智能规划</h3>
+                <p class="text-sm text-slate-500 mb-4">告诉我你想学什么或做什么，我来帮你拆解成每日打卡项。</p>
+                <textarea v-model="planPrompt" placeholder="例如：我想在一个月内学会 n8n 的基础操作，每天大概有30分钟时间..." class="w-full h-32 bg-slate-50 rounded-xl p-4 text-sm mb-4 resize-none outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+                <div class="flex gap-3 justify-end">
+                    <button @click="showPlanModal = false" class="text-slate-500 px-4 py-2 text-sm">取消</button>
+                    <button @click="generatePlan" :disabled="isThinking" class="bg-emerald-600 text-white px-6 py-2 rounded-lg text-sm font-bold shadow-lg shadow-emerald-200 hover:bg-emerald-700">
+                        {{ isThinking ? '生成中...' : '生成计划' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                // --- 状态 ---
+                const currentTab = ref('dashboard');
+                const showMobileMenu = ref(false);
+                const showPlanModal = ref(false);
+                const planPrompt = ref('');
+                const userInput = ref('');
+                const isThinking = ref(false);
+                const voiceStatus = ref('');
+                const isVoiceActive = ref(false);
+
+                // 数据
+                const menuItems = [
+                    { id: 'dashboard', name: '总览 & 打卡', icon: '📊' },
+                    { id: 'chat', name: 'AI 助手', icon: '🤖' },
+                    { id: 'settings', name: '同步设置', icon: '⚙️' }
+                ];
+                
+                // 本地/云端 配置
+                const apiKey = ref(localStorage.getItem('ls_apiKey') || '');
+                const apiBaseUrl = ref(localStorage.getItem('ls_apiBaseUrl') || 'https://api.openai.com/v1');
+                const supabaseUrl = ref(localStorage.getItem('ls_sbUrl') || '');
+                const supabaseKey = ref(localStorage.getItem('ls_sbKey') || '');
+                const isCloudSync = ref(false);
+                let supabase = null;
+
+                // 核心数据
+                const defaultHabits = [
+                    { id: 1, name: '健身', desc: '核心力量训练', icon: '💪', history: [], lastFeedback: '' },
+                    { id: 2, name: 'n8n 学习', desc: '构建一个自动化流', icon: '⚡', history: [], lastFeedback: '' }
+                ];
+                const habits = ref(JSON.parse(localStorage.getItem('ls_habits')) || defaultHabits);
+                const chatHistory = ref(JSON.parse(localStorage.getItem('ls_chat')) || []);
+
+                // 每日名言
+                const quotes = ["坚持比完美更重要。", "种一棵树最好的时间是十年前，其次是现在。", "不要假装努力，结果不会陪你演戏。"];
+                const dailyQuote = ref(quotes[Math.floor(Math.random() * quotes.length)]);
+
+                // --- 语音识别与合成 (Web Speech API) ---
+                let recognition = null;
+                const synth = window.speechSynthesis;
+
+                const initVoice = () => {
+                    if ('webkitSpeechRecognition' in window) {
+                        recognition = new webkitSpeechRecognition();
+                        recognition.continuous = false;
+                        recognition.lang = 'zh-CN';
+                        recognition.onstart = () => { voiceStatus.value = '正在听...'; };
+                        recognition.onend = () => { voiceStatus.value = ''; isVoiceActive.value = false; };
+                        recognition.onresult = (event) => {
+                            const transcript = event.results[0][0].transcript;
+                            userInput.value = transcript;
+                            sendMessage(); // 听到后直接发送
+                        };
+                    } else {
+                        alert("你的浏览器不支持语音输入，请使用 Chrome 或 Edge。");
+                    }
+                };
+
+                const toggleVoiceMode = () => {
+                    if (!recognition) initVoice();
+                    if (isVoiceActive.value) {
+                        recognition.stop();
+                        isVoiceActive.value = false;
+                    } else {
+                        recognition.start();
+                        isVoiceActive.value = true;
+                    }
+                };
+
+                const speak = (text) => {
+                    if (synth.speaking) synth.cancel();
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.lang = 'zh-CN';
+                    synth.speak(utterance);
+                };
+
+                // --- 业务逻辑 ---
+
+                // 1. 打卡与反馈绑定
+                const isCheckedToday = (habit) => {
+                    const today = new Date().toISOString().split('T')[0];
+                    return habit.history.includes(today);
+                };
+
+                const toggleCheck = (idx) => {
+                    const habit = habits.value[idx];
+                    const today = new Date().toISOString().split('T')[0];
+                    if (habit.history.includes(today)) {
+                        habit.history = habit.history.filter(d => d !== today);
+                    } else {
+                        habit.history.push(today);
+                        // 触发AI夸奖
+                        if(apiKey.value) quickAIReview(habit.name);
+                    }
+                    saveData();
+                };
+
+                // 2. AI 核心交互
+                const callAI = async (messages, jsonMode = false) => {
+                    if (!apiKey.value) throw new Error("请先设置 API Key");
+                    const response = await fetch(`${apiBaseUrl.value}/chat/completions`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey.value}` },
+                        body: JSON.stringify({
+                            model: "gpt-3.5-turbo", // 可换 deepseek-chat
+                            messages: messages,
+                            response_format: jsonMode ? { type: "json_object" } : undefined
+                        })
+                    });
+                    const data = await response.json();
+                    return data.choices[0].message.content;
+                };
+
+                const sendMessage = async () => {
+                    if (!userInput.value.trim()) return;
+                    const text = userInput.value;
+                    userInput.value = '';
+                    chatHistory.value.push({ role: 'user', content: text, time: new Date().toLocaleTimeString() });
+                    isThinking.value = true;
+                    
+                    try {
+                        // 构建 Prompt：带上当前的习惯状态
+                        const habitsState = habits.value.map(h => `${h.name}(${isCheckedToday(h)?'已完成':'未完成'}: ${h.lastFeedback})`).join(', ');
+                        const systemPrompt = `你是一个长期主义教练。用户的当前状态：${habitsState}。
+                        如果用户在进行“复盘”，请根据状态提出建议。
+                        如果用户问关于 ${habits.value.map(h=>h.name).join(',')} 的知识，请解答。
+                        回答要简短有力。`;
+
+                        const reply = await callAI([
+                            { role: "system", content: systemPrompt },
+                            ...chatHistory.value.slice(-5).map(m => ({role: m.role, content: m.content}))
+                        ]);
+                        
+                        chatHistory.value.push({ role: 'assistant', content: reply, time: new Date().toLocaleTimeString() });
+                        speak(reply); // AI 语音回复
+
+                    } catch (e) {
+                        chatHistory.value.push({ role: 'assistant', content: "错误: " + e.message, time: '' });
+                    } finally {
+                        isThinking.value = false;
+                        saveData();
+                    }
+                };
+
+                // 3. 语音复盘模式 (Interactive Interview)
+                const startDailyReview = async () => {
+                    currentTab.value = 'chat';
+                    const unfinished = habits.value.filter(h => !isCheckedToday(h)).map(h => h.name);
+                    let prompt = "";
+                    if (unfinished.length > 0) {
+                        prompt = `嘿，我看你今天还没有完成 ${unfinished.join(' 和 ')}。发生了什么困难吗？还是准备现在开始？`;
+                    } else {
+                        prompt = "哇！你今天任务全绿！今天做这些任务的时候，有什么特别的收获想记录下来吗？";
+                    }
+                    chatHistory.value.push({ role: 'assistant', content: prompt, time: new Date().toLocaleTimeString() });
+                    speak(prompt);
+                    // 自动开启听写
+                    setTimeout(() => toggleVoiceMode(), 3000); 
+                };
+
+                // 4. AI 生成计划
+                const generatePlan = async () => {
+                    if (!planPrompt.value) return;
+                    isThinking.value = true;
+                    try {
+                        const prompt = `用户目标：${planPrompt.value}。请拆解为1-3个具体的每日重复习惯。
+                        必须返回纯 JSON 格式：{"habits": [{"name": "简短名称", "desc": "具体执行动作", "icon": "emoji"}]}`;
+                        
+                        const jsonStr = await callAI([{ role: "system", content: "你是一个计划规划师，只输出JSON。" }, { role: "user", content: prompt }], true);
+                        const result = JSON.parse(jsonStr);
+                        
+                        result.habits.forEach(h => {
+                            habits.value.push({ ...h, history: [], lastFeedback: '' });
+                        });
+                        showPlanModal.value = false;
+                        planPrompt.value = '';
+                        alert(`已添加 ${result.habits.length} 个新习惯！`);
+                    } catch (e) {
+                        alert("生成失败，请检查 API 设置");
+                    } finally {
+                        isThinking.value = false;
+                        saveData();
+                    }
+                };
+
+                // 简单的打卡即时反馈
+                const quickAIReview = async (habitName) => {
+                    try {
+                        const cheer = await callAI([{role: "system", content: "一句话夸奖用户完成了任务，幽默一点。"}, {role: "user", content: `我完成了 ${habitName}`}]);
+                        // 将反馈绑定到习惯上
+                        const h = habits.value.find(i => i.name === habitName);
+                        if(h) h.lastFeedback = cheer;
+                    } catch(e) {}
+                };
+
+                // --- 数据与同步 ---
+                const connectSupabase = async () => {
+                    if(!supabaseUrl.value || !supabaseKey.value) return;
+                    try {
+                        supabase = window.supabase.createClient(supabaseUrl.value, supabaseKey.value);
+                        const { data, error } = await supabase.from('user_data').select('*').limit(1);
+                        if (!error) {
+                            isCloudSync.value = true;
+                            // 简单的合并逻辑：如果有云端数据，覆盖本地
+                            if(data && data.length > 0) {
+                                habits.value = data[0].habits;
+                                chatHistory.value = data[0].chat_history;
+                            }
+                            localStorage.setItem('ls_sbUrl', supabaseUrl.value);
+                            localStorage.setItem('ls_sbKey', supabaseKey.value);
+                            alert("☁️ 云端连接成功！");
+                        } else {
+                            throw error;
+                        }
+                    } catch (e) {
+                        alert("连接失败，请检查 URL 和 Key。需先在 Supabase 建表。");
+                    }
+                };
+
+                const saveData = async () => {
+                    // 1. 本地保存
+                    localStorage.setItem('ls_habits', JSON.stringify(habits.value));
+                    localStorage.setItem('ls_chat', JSON.stringify(chatHistory.value));
+                    
+                    // 2. 云端保存 (如果已连接)
+                    if (isCloudSync.value && supabase) {
+                        // 假设有一个表 user_data，id=1 是当前用户
+                        await supabase.from('user_data').upsert({ 
+                            id: 1, 
+                            habits: habits.value, 
+                            chat_history: chatHistory.value,
+                            updated_at: new Date()
+                        });
+                    }
+                };
+
+                // 工具函数
+                const renderMarkdown = (text) => marked.parse(text);
+                const getTabName = (id) => menuItems.find(i => i.id === id).name;
+                const completionRate = computed(() => {
+                    if(habits.value.length === 0) return 0;
+                    const done = habits.value.filter(h => isCheckedToday(h)).length;
+                    return Math.round((done / habits.value.length) * 100);
+                });
+                const maxStreak = computed(() => {
+                    // 简单计算所有习惯中最长的历史长度
+                    return Math.max(0, ...habits.value.map(h => h.history.length));
+                });
+
+                watch([apiKey, apiBaseUrl], () => {
+                    localStorage.setItem('ls_apiKey', apiKey.value);
+                    localStorage.setItem('ls_apiBaseUrl', apiBaseUrl.value);
+                });
+
+                return {
+                    currentTab, menuItems, getTabName, showMobileMenu,
+                    habits, isCheckedToday, toggleCheck,
+                    chatHistory, userInput, sendMessage, isThinking, renderMarkdown,
+                    dailyQuote, startDailyReview, voiceStatus, isVoiceActive, toggleVoiceMode,
+                    showPlanModal, planPrompt, generatePlan,
+                    completionRate, maxStreak,
+                    apiKey, apiBaseUrl, supabaseUrl, supabaseKey, connectSupabase, isCloudSync
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
